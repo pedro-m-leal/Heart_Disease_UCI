@@ -6,6 +6,7 @@ import matplotlib.patches as mpatches
 import numpy as np 
 import seaborn as sns
 import time
+import pandas_profiling as pp
 
 from sklearn.preprocessing import StandardScaler, RobustScaler #Scaling Time and Amount
 from mpl_toolkits import mplot3d
@@ -14,8 +15,14 @@ from sklearn.model_selection import StratifiedKFold, learning_curve, StratifiedS
 from sklearn.metrics import f1_score, precision_score, precision_recall_fscore_support, fbeta_score, classification_report, roc_curve, roc_auc_score, confusion_matrix
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC, SVC
-from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier
+from sklearn.ensemble import AdaBoostClassifier, RandomForestClassifier, GradientBoostingClassifier
 from sklearn.tree import DecisionTreeClassifier
+from sklearn.neural_network import MLPClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE, MDS, LocallyLinearEmbedding, SpectralEmbedding, Isomap
+import mca
+import prince
 
 
 
@@ -99,7 +106,9 @@ df_test.reset_index(drop=True, inplace=True)
 
 print('\n\n ============ Spliting training and cross-validation sets ============= \n\n')
 
-for train_index, cv_index in ss.split(df_train_cv):
+ss2=ShuffleSplit(n_splits=1,test_size=0.4)
+
+for train_index, cv_index in ss2.split(df_train_cv):
     df_train, df_cv = df_train_cv.loc[train_index], df_train_cv.loc[cv_index]
 
 
@@ -138,6 +147,7 @@ rb=StandardScaler()
 scaler=rb.fit(df_train_no_outlier[numerical])
 df_train[numerical]=scaler.transform(df_train[numerical])
 df_cv[numerical]=scaler.transform(df_cv[numerical])
+df_test[numerical]=scaler.transform(df_test[numerical])
 
 print(df_train[numerical].describe())
 
@@ -152,14 +162,62 @@ df_train.drop(['outlier'],axis=1,inplace=True)
 df_cv=df_cv.join(pd.get_dummies(df_cv[categorical],columns=categorical,drop_first=True))
 df_cv.drop(categorical,axis=1,inplace=True)
 
+df_test=df_test.join(pd.get_dummies(df_test[categorical],columns=categorical,drop_first=True))
+df_test.drop(categorical,axis=1,inplace=True)
 
-# Removing features that are highly correlated
 
-print('\n\n ============ Removing highly correlated features ============= \n\n')
 
-df_train.drop(['thal_3','slope_1'],axis=1,inplace=True)
+# Doing MCA and PCA
 
-df_cv.drop(['thal_3','slope_1'],axis=1,inplace=True)
+print('\n\n ============ Doing PCA and MCA ============= \n\n')
+
+dummies=['sex','fbs','exang','cp_1', 'cp_2', 'cp_3', 'restecg_1', 'slope_1', 'slope_2', 'ca_1', 'ca_2', 'ca_3', 'thal_2', 'thal_3']
+numerical=['age','trestbps','chol','thalach','oldpeak']
+all_cols=['sex','fbs','exang','cp_1', 'cp_2', 'cp_3', 'restecg_1', 'slope_1', 'slope_2', 'ca_1', 'ca_2', 'ca_3', 'thal_2', 'thal_3','age','trestbps','chol','thalach','oldpeak']
+
+pca=PCA(n_components=len(numerical))
+pca.fit(df_train[numerical])
+df_train[numerical]=pca.transform(df_train[numerical])
+df_cv[numerical]=pca.transform(df_cv[numerical])
+df_test[numerical]=pca.transform(df_test[numerical])
+print('Explained variance in the numerical values: ',pca.explained_variance_ratio_)
+
+mca=prince.MCA(n_components=len(dummies))
+mca.fit(df_train[dummies])
+df_train[dummies]=mca.transform(df_train[dummies])
+df_cv[dummies]=mca.transform(df_cv[dummies])
+df_test[dummies]=mca.transform(df_test[dummies])
+
+pca2=PCA(n_components=len(df_train[all_cols].columns.tolist()))
+pca2.fit(df_train[all_cols])
+df_train[all_cols]=pca2.transform(df_train[all_cols])
+df_cv[all_cols]=pca2.transform(df_cv[all_cols])
+df_test[all_cols]=pca2.transform(df_test[all_cols])
+
+
+
+print('\n\nExplained variance in the binary values: ', mca.explained_inertia_)
+
+print('\nModified dataframe:')
+print(df_train.head())
+
+try:
+    fn=open("df_pandas_profiling_after_pca.html")
+    fn.close()
+except:
+    print('\n---- No profile exists yet. Creating profile. ----\n')
+    profile = df_train.profile_report(title='Pandas Profiling Report')
+    profile.to_file(output_file="df_pandas_profiling_after_pca.html")
+
+
+# Checking for correlations between features again
+
+print('\n\n ============ Checking correlations ============= \n\n')
+
+colour=sns.diverging_palette(240,10,as_cmap=True)
+sns.heatmap(df_train.corr(),annot=True,cmap=colour)
+plt.title('Correlation Heatmap')
+plt.show()
 
 # Split X and y
 
@@ -175,28 +233,31 @@ print('\n\n',X_train.shape,'\n\n')
 print('\n\n',X_cv.shape,'\n\n')
 
 
+
 # Select best features
 
 selector = RFECV(DecisionTreeClassifier(max_depth=2), step=1, cv=5)
 selector.fit(X_train,y_train)
 ranking=selector.ranking_
-best_columns=[a*b for a,b in zip(X_train.columns.tolist(),ranking<3)]
+best_columns=[a*b for a,b in zip(X_train.columns.tolist(),ranking<30)]
 best_columns=list(filter(None,best_columns))
 print('-> The best columns are:',best_columns)
 
 X_train=X_train[best_columns]
 X_cv=X_cv[best_columns]
 
-
+sns.scatterplot(data=df_train,x='cp_3',y='sex',hue='target')
+plt.show()
 ## Model training
 
 print('\n\n ============ Setting up and training the model ============= \n\n')
 
-dt=SVC(C=1,gamma=10,kernel='poly')
+dt=LogisticRegression(C=1000,solver='lbfgs') #MLPClassifier(max_iter=1000) #AdaBoostClassifier(base_estimator=DecisionTreeClassifier(max_depth=1)) #LogisticRegression(solver='lbfgs',C=100) #GaussianNB() #SVC(C=100,gamma=1,kernel='rbf')
 dt.fit(X_train,y_train)
 train_score=dt.score(X_train,y_train)
 cv_score=dt.score(X_cv,y_cv)
 preds_cv=dt.predict(X_cv)
+probs_cv=dt.predict_proba(X_cv)
 
 print(train_score,'\n' ,cv_score)
 
@@ -219,13 +280,45 @@ plt.figure()
 plt.title('Learning Curves')
 plt.xlabel("Training examples")
 plt.ylabel("Score")
-plt.grid()
+plt.grid(b=True)
 plt.fill_between(train_sizes, train_scores_mean - train_scores_std, train_scores_mean + train_scores_std, alpha=0.1, color="r")
 plt.fill_between(train_sizes, test_scores_mean - test_scores_std, test_scores_mean + test_scores_std, alpha=0.1, color="g")
 plt.plot(train_sizes, train_scores_mean, 'o-', color="r", label="Training score")
 plt.plot(train_sizes, test_scores_mean, 'o-', color="g", label="Cross-validation score")
 plt.legend(loc="best")
 plt.show()
+
+## Plot the roc curve for the best model
+
+
+fpr, tpr, thresholds = roc_curve(y_cv,probs_cv[:,1],)
+
+plt.figure()
+plt.title('ROC curve')
+plt.xlabel("FPR")
+plt.ylabel("TPR")
+plt.grid(b=True)
+plt.plot([0,1],[0,1],color='b',dashes=[2,2])
+plt.plot(fpr,tpr,color='r',label='Area Under ROC curve = {}'.format(roc_auc_score(y_cv,probs_cv[:,1])))
+plt.legend()
+plt.show()
+
+## Predict on the test_set
+
+
+# X_test=df_test.drop(['target'],axis=1)
+# y_test=df_test['target']
+
+# X_test=X_test[best_columns]
+
+# test_preds=dt.predict(X_test)
+# cm_test=confusion_matrix(y_test,test_preds)
+# sns.heatmap(cm_test,annot=True,cmap='PuBu')
+# plt.show()
+# test_score=dt.score(X_test,y_test)
+# print(test_score)
+
+
 
 
 
