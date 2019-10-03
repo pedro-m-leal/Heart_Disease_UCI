@@ -7,6 +7,8 @@ import numpy as np
 import seaborn as sns
 import time
 import pandas_profiling as pp
+import tensorflow as tf
+import keras
 
 from sklearn.preprocessing import StandardScaler, RobustScaler #Scaling Time and Amount
 from mpl_toolkits import mplot3d
@@ -23,6 +25,7 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE, MDS, LocallyLinearEmbedding, SpectralEmbedding, Isomap
 import mca
 import prince
+
 
 
 
